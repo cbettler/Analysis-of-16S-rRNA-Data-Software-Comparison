@@ -1,0 +1,55 @@
+#AWS Instance used where appropriate as docker qiime2/core:2019.1 gives error in some step
+#ssh qiime2@52.10.103.201
+#password: qiime2
+
+echo "bash script for qiime2 using docker"
+echo "Start the qiime2 pipeline with docker"
+#step0: volume mount docker qiime to the qiime2 folder
+#docker run -t -i -v C:/Users/okoro/OneDrive/Desktop/qiime2_bioi500:/data qiime2/core:2019.1
+
+echo "step1. Data import"
+qiime tools import --type 'SampleData[PairedEndSequencesWithQuality]' --input-path fastq_manifest.txt --input-format PairedEndFastqManifestPhred33 --output-path paired-end-demux.qza
+
+echo "step2. view summary of imported data"
+#qiime demux summarize --i-data paired-end-demux.qza --o-visualization paired-end-demux.qzv
+#completed this step on the Amazon web services
+#aws spec: "instance type: t1.micro", "number of vCPUs: 1", "qiime2 used: QIIME 2 Core - 2018.8 (1536193506) (ami-04d99b45e6d99e48e)", "hard disk memory: 24Gb", "ram: 0.613"
+#Run time: real  0m17.851s user  0m13.888s, sys     0m1.192s
+
+echo "step3. join (forward and reverse) reads using q2-vsearch"
+#qiime vsearch join-pairs --i-demultiplexed-seqs paired-end-demux.qza --o-joined-sequences demux-joined.qza
+#completed this step on the Amazon web services
+#aws spec: "instance type: t1.micro", "number of vCPUs: 1", "qiime2 used: QIIME 2 Core - 2018.8 (1536193506) (ami-04d99b45e6d99e48e)", "hard disk memory: 24Gb", "ram: 0.613"
+#Run time: real    0m13.834s, user    0m10.480s, sys     0m2.948s
+
+echo "step4. view summary of joined reads"
+qiime demux summarize --i-data demux-joined.qza --o-visualization demux-joined.qzv
+
+echo "step5. base quality-score-based filtering"
+qiime quality-filter q-score-joined --i-demux demux-joined.qza --o-filtered-sequences demux-joined-filtered.qza --o-filter-stats demux-joined-filter-stats.qza
+
+echo "step6. view summary after quality filtering"
+qiime metadata tabulate --m-input-file demux-joined-filter-stats.qza --o-visualization demux-joined-filter-stats.qzv
+qiime demux summarize --i-data demux-joined-filtered.qza --o-visualization demux-joined-filtered.qzv
+
+echo "step7. Actual denoising with deblur"
+qiime deblur denoise-16S --i-demultiplexed-seqs demux-joined-filtered.qza --p-trim-length 250 --p-sample-stats --o-representative-sequences deblur-rep-seqs.qza --o-table deblur-table.qza --o-stats deblur-stats.qza
+
+echo "step8. view the summary of the FeatureTable, FeatureData, and DeblurStats"
+qiime feature-table summarize --i-table deblur-table.qza --o-visualization deblur-table.qzv
+qiime feature-table tabulate-seqs --i-data deblur-rep-seqs.qza --o-visualization deblur-rep-seqs.qzv
+qiime deblur visualize-stats --i-deblur-stats deblur-stats.qza --o-visualization deblur-stats.qzv
+
+#taxonomy assignment Using a pre-trained Naive Bayes classifier
+#The Greengenes 13_8 99% was used
+#downloaded from https://data.qiime2.org/2019.1/common/gg-13-8-99-515-806-nb-classifier.qza
+#Greengenes 13_8 99% OTUs, where the sequences have been trimmed to only include 250 bases from the region of the 16S that was sequenced in this analysis (the V4 region, bound by the 515F/806R primer pair)
+
+echo "step9. taxonomy asiignment"
+qiime feature-classifier classify-sklearn --i-classifier gg-13-8-99-515-806-nb-classifier.qza --i-reads deblur-rep-seqs.qza --o-classification deblur-taxonomy.qza
+
+echo "step10. view the summary of the taxonomy"
+qiime metadata tabulate --m-input-file deblur-taxonomy.qza --o-visualization deblur-taxonomy.qzv
+
+echo "step11. make taxa abundance barplot and view"
+qiime taxa barplot --i-table deblur-table.qza --i-taxonomy deblur-taxonomy.qza --m-metadata-file sample-metadata.txt --o-visualization taxa-bar-plots.qzv
